@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Create Profile — Orbit</title>
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --border: #2a2a2a;
+      --text: #d4d4d4;
+      --text-dim: #777;
+      --accent: #5b8def;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 48px;
+      -webkit-app-region: drag;
+    }
+    .setup-page {
+      width: 100%;
+      max-width: 380px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      -webkit-app-region: no-drag;
+    }
+    .setup-logo {
+      width: 56px;
+      height: 56px;
+      margin-bottom: 24px;
+      border-radius: 12px;
+      flex-shrink: 0;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      letter-spacing: -0.3px;
+    }
+    p {
+      font-size: 14px;
+      color: var(--text-dim);
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+    .setup-form {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      font-size: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      margin-bottom: 12px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.2);
+    }
+    input::placeholder {
+      color: var(--text-dim);
+    }
+    .error {
+      font-size: 13px;
+      color: #e74c3c;
+      margin-bottom: 12px;
+      min-height: 18px;
+      display: none;
+    }
+    .error.visible { display: block; }
+    button {
+      width: 100%;
+      padding: 12px 18px;
+      font-size: 14px;
+      font-weight: 500;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: opacity 0.15s, background 0.15s, transform 0.1s;
+    }
+    button:hover {
+      opacity: 0.95;
+      background: #4a7ed9;
+    }
+    button:active {
+      transform: scale(0.99);
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div class="setup-page">
+    <img src="../assets/orbit-logo.png" alt="Orbit" class="setup-logo" />
+    <h1>Create your profile</h1>
+    <p>Orbit uses profiles to keep your bookmarks, history, and settings separate. Create your first profile to get started.</p>
+    <form id="profile-form" class="setup-form">
+      <label for="profile-name">Profile name</label>
+      <input
+        type="text"
+        id="profile-name"
+        placeholder="e.g. Work, Personal"
+        autocomplete="off"
+        autofocus
+        maxlength="64"
+      />
+      <div class="error" id="error"></div>
+      <button type="submit" id="create-btn">Create profile</button>
+    </form>
+  </div>
+  <script>
+    const form = document.getElementById("profile-form");
+    const input = document.getElementById("profile-name");
+    const btn = document.getElementById("create-btn");
+    const err = document.getElementById("error");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = input.value.trim();
+      if (!name) {
+        err.textContent = "Please enter a profile name.";
+        err.classList.add("visible");
+        return;
+      }
+      err.classList.remove("visible");
+      btn.disabled = true;
+      try {
+        const result = await window.orbit.profile.create(name, true);
+        if (result?.error) {
+          err.textContent = result.error;
+          err.classList.add("visible");
+          btn.disabled = false;
+        }
+      } catch (ex) {
+        err.textContent = ex.message || "Failed to create profile.";
+        err.classList.add("visible");
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

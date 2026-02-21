@@ -270,14 +270,45 @@ const SETTINGS_PANELS = {
           </div>
       <div class="settings-field settings-field-inline">
         <div class="settings-field-row">
-          <label class="settings-field-label" for="ai-api-key-input">OpenRouter API Key</label>
-          <input type="password" id="ai-api-key-input" class="settings-input" placeholder="sk-..." autocomplete="off" />
+          <label class="settings-field-label" for="ai-provider-select">LLM Provider</label>
+          <select id="ai-provider-select" class="settings-input" style="max-width:220px;">
+            <option value="openrouter">OpenRouter</option>
+            <option value="gemini">Google Gemini (AI Studio)</option>
+          </select>
         </div>
       </div>
-      <div class="settings-field settings-field-inline">
+      <div id="openrouter-fields">
+        <div class="settings-field settings-field-inline">
+          <div class="settings-field-row">
+            <label class="settings-field-label" for="ai-api-key-input">OpenRouter API Key</label>
+            <input type="password" id="ai-api-key-input" class="settings-input" placeholder="sk-..." autocomplete="off" />
+          </div>
+        </div>
+        <div class="settings-field settings-field-inline">
+          <div class="settings-field-row">
+            <label class="settings-field-label" for="ai-model-input">OpenRouter Model</label>
+            <input type="text" id="ai-model-input" class="settings-input" placeholder="e.g. openai/gpt-4o, anthropic/claude-3.5-sonnet" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+      <div id="gemini-fields" style="display:none;">
+        <div class="settings-field settings-field-inline">
+          <div class="settings-field-row">
+            <label class="settings-field-label" for="gemini-api-key-input">Gemini API Key</label>
+            <input type="password" id="gemini-api-key-input" class="settings-input" placeholder="AI Studio API key..." autocomplete="off" />
+          </div>
+        </div>
+        <div class="settings-field settings-field-inline">
+          <div class="settings-field-row">
+            <label class="settings-field-label" for="gemini-model-input">Gemini Model</label>
+            <input type="text" id="gemini-model-input" class="settings-input" placeholder="e.g. gemini-2.5-flash, gemini-2.5-pro" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+      <div class="settings-field settings-field-inline" style="margin-top: 24px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
         <div class="settings-field-row">
-          <label class="settings-field-label" for="ai-model-input">OpenRouter Model</label>
-          <input type="text" id="ai-model-input" class="settings-input" placeholder="e.g. openai/gpt-4o, anthropic/claude-3.5-sonnet" autocomplete="off" />
+          <label class="settings-field-label" for="tavily-api-key-input">Tavily API Key <span style="opacity:0.5;font-size:12px;">(for web search)</span></label>
+          <input type="password" id="tavily-api-key-input" class="settings-input" placeholder="tvly-..." autocomplete="off" />
         </div>
       </div>
       <div class="settings-field-row" style="margin-top: 16px;">
@@ -287,17 +318,48 @@ const SETTINGS_PANELS = {
       </div>
     `,
     onMount: async (content) => {
+      const providerSelect = content.querySelector("#ai-provider-select");
+      const openrouterFields = content.querySelector("#openrouter-fields");
+      const geminiFields = content.querySelector("#gemini-fields");
       const keyInput = content.querySelector("#ai-api-key-input");
       const modelInput = content.querySelector("#ai-model-input");
+      const geminiKeyInput = content.querySelector("#gemini-api-key-input");
+      const geminiModelInput = content.querySelector("#gemini-model-input");
+      const tavilyInput = content.querySelector("#tavily-api-key-input");
       const saveBtn = content.querySelector("#save-ai-settings-btn");
 
-      const [key, model] = await Promise.all([window.orbit.apiKey.get(), window.orbit.aiModel.get()]);
+      function toggleProviderFields() {
+        const isGemini = providerSelect.value === "gemini";
+        openrouterFields.style.display = isGemini ? "none" : "";
+        geminiFields.style.display = isGemini ? "" : "none";
+      }
+      providerSelect.addEventListener("change", toggleProviderFields);
+
+      const [provider, key, model, geminiKey, geminiModel, tavilyKey] = await Promise.all([
+        window.orbit.aiProvider.get(),
+        window.orbit.apiKey.get(),
+        window.orbit.aiModel.get(),
+        window.orbit.geminiKey.get(),
+        window.orbit.geminiModel.get(),
+        window.orbit.tavilyKey.get(),
+      ]);
+      providerSelect.value = provider || "openrouter";
+      toggleProviderFields();
       if (key) keyInput.value = key;
       if (model) modelInput.value = model;
+      if (geminiKey) geminiKeyInput.value = geminiKey;
+      if (geminiModel) geminiModelInput.value = geminiModel;
+      if (tavilyKey) tavilyInput.value = tavilyKey;
 
       saveBtn.addEventListener("click", async () => {
-        await window.orbit.apiKey.set(keyInput.value.trim());
-        await window.orbit.aiModel.set(modelInput.value.trim());
+        await Promise.all([
+          window.orbit.aiProvider.set(providerSelect.value),
+          window.orbit.apiKey.set(keyInput.value.trim()),
+          window.orbit.aiModel.set(modelInput.value.trim()),
+          window.orbit.geminiKey.set(geminiKeyInput.value.trim()),
+          window.orbit.geminiModel.set(geminiModelInput.value.trim()),
+          window.orbit.tavilyKey.set(tavilyInput.value.trim()),
+        ]);
         saveBtn.textContent = "Saved!";
         setTimeout(() => { saveBtn.textContent = "Save"; }, 1500);
       });
@@ -344,8 +406,10 @@ const SETTINGS_PANELS = {
           <span class="vault-file-date">${dateStr}</span>
           <span class="vault-file-action">Open in tab →</span>
         `;
-        card.addEventListener("click", () => {
-          createTab(`orbit-vault://${file.id}`, { title: file.original_name });
+        card.addEventListener("click", async () => {
+          const profile = await window.orbit.profile.getCurrent();
+          const profileId = profile?.id || "";
+          createTab(`orbit-vault://${profileId}/${file.id}`, { title: file.original_name });
         });
         return card;
       }
@@ -363,36 +427,104 @@ const SETTINGS_PANELS = {
 
       uploadBtn.addEventListener("click", async () => {
         const added = await window.orbit.vault.add();
-        if (added) loadVault();
+        if (added?.length) loadVault();
       });
 
       loadVault();
     },
   },
+  bookmarks: {
+    label: "Bookmarks",
+    icon: `<svg viewBox="0 0 24 24"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>`,
+    render: () => `
+      <div class="settings-content-header">
+        <h2>Bookmarks</h2>
+        <button class="history-icon-btn" id="refresh-bookmarks-btn" title="Refresh">
+          <svg viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+      </div>
+      <ul class="history-list" id="bookmarks-list">
+        <li class="history-empty">Loading...</li>
+      </ul>
+    `,
+    onMount: async (content) => {
+      const list = content.querySelector("#bookmarks-list");
+      const refreshBtn = content.querySelector("#refresh-bookmarks-btn");
+
+      function createBookmarkItem(bm) {
+        const li = document.createElement("li");
+        li.className = "history-item bookmark-item-row";
+
+        const info = document.createElement("div");
+        info.className = "history-info";
+        info.style.flex = "1";
+        const title = document.createElement("span");
+        title.className = "history-title";
+        title.textContent = bm.title || bm.url;
+        const url = document.createElement("span");
+        url.className = "history-url";
+        url.textContent = bm.url;
+        url.title = bm.url;
+        url.addEventListener("click", () => createTab(bm.url));
+        info.appendChild(title);
+        info.appendChild(url);
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "history-icon-btn history-icon-btn-danger";
+        deleteBtn.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;
+        deleteBtn.title = "Remove bookmark";
+        deleteBtn.addEventListener("click", async () => {
+          await window.orbit.bookmark.remove(bm.id);
+          loadBookmarks();
+          window.dispatchEvent(new CustomEvent("orbit:bookmarksChanged"));
+        });
+
+        li.appendChild(info);
+        li.appendChild(deleteBtn);
+        return li;
+      }
+
+      async function loadBookmarks() {
+        const items = await window.orbit.bookmark.list();
+        list.innerHTML = "";
+        if (!items.length) {
+          list.innerHTML = '<li class="history-empty">No bookmarks yet.</li>';
+          return;
+        }
+        for (const bm of items) {
+          list.appendChild(createBookmarkItem(bm));
+        }
+      }
+
+      refreshBtn.addEventListener("click", () => loadBookmarks());
+      loadBookmarks();
+    },
+  },
   "home-page": {
-    label: "Home Page",
+    label: "Home",
     icon: `<svg viewBox="0 0 24 24" style="stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M3 12l2-2m0 0l7-7 7 7m-14 0v9a1 1 0 0 0 1 1h3m10-10l2 2m-2-2v9a1 1 0 0 1-1 1h-3m-4 0a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-2z"/></svg>`,
     render: () => `
       <div class="settings-panel-centered">
         <div class="settings-panel-centered-inner">
           <div class="settings-content-header">
-            <h2>Home Page</h2>
+            <h2>Home</h2>
           </div>
-      <div class="settings-field">
-        <label class="settings-field-label">Quick options</label>
-        <div class="home-page-presets">
-          <button class="home-preset-btn" data-url="orbit://home">Orbit Home</button>
-          <button class="home-preset-btn" data-url="https://www.google.com">Google</button>
-          <button class="home-preset-btn" data-url="https://duckduckgo.com">DuckDuckGo</button>
-        </div>
-      </div>
-      <div class="settings-field">
-        <label class="settings-field-label" for="home-url-input">Custom URL</label>
-        <div class="settings-field-row">
-          <input type="text" id="home-url-input" class="settings-input" placeholder="https://example.com or orbit://home" autocomplete="off" />
-          <button class="settings-btn" id="save-home-btn">Save</button>
-        </div>
-      </div>
+          <div class="home-page-card">
+            <h3 class="home-page-card-title">Default Home Page</h3>
+            <p class="home-page-card-desc">Choose where new tabs open.</p>
+            <div class="home-page-presets">
+              <button class="home-preset-btn" data-url="orbit://home">Orbit Home</button>
+              <button class="home-preset-btn" data-url="https://www.google.com">Google</button>
+              <button class="home-preset-btn" data-url="https://duckduckgo.com">DuckDuckGo</button>
+            </div>
+            <div class="home-page-custom">
+              <label class="home-page-custom-label" for="home-url-input">Custom URL</label>
+              <div class="home-page-custom-row">
+                <input type="text" id="home-url-input" class="settings-input" placeholder="https://example.com" autocomplete="off" />
+                <button class="settings-btn" id="save-home-btn">Save</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     `,
@@ -431,7 +563,7 @@ const SETTINGS_PANELS = {
 
 const INTERNAL_PAGES = {
   [HOME_URL]: {
-    title: "Orbit",
+    title: "Orbit AI",
     build: (el) => {
       el.innerHTML = `
         <div class="chat-page">
@@ -444,10 +576,19 @@ const INTERNAL_PAGES = {
                 </div>
                 <div class="chat-input-area" id="chat-input-area">
                   <div class="chat-input-box">
-                    <button class="chat-attach-btn" title="Attach">
-                      <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-                    </button>
-                    <textarea class="chat-textarea" id="chat-input" placeholder="Message Orbit..." rows="1"></textarea>
+                    <div class="chat-attach-wrap">
+                      <button class="chat-attach-btn" id="chat-attach-btn" title="Attach">
+                        <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                      </button>
+                      <div class="chat-attach-dropdown" id="chat-attach-dropdown">
+                        <button class="chat-attach-option" data-source="computer">Upload from computer</button>
+                        <button class="chat-attach-option" data-source="vault">Select from file vault</button>
+                      </div>
+                    </div>
+                    <div class="chat-input-row">
+                      <div class="chat-attachments" id="chat-attachments"></div>
+                      <textarea class="chat-textarea" id="chat-input" placeholder="Message Orbit..." rows="1"></textarea>
+                    </div>
                     <button class="chat-send-btn" id="chat-send-btn" title="Send" disabled>
                       <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
                     </button>
@@ -458,6 +599,18 @@ const INTERNAL_PAGES = {
           </div>
           <div class="chat-input-footer" id="chat-input-footer"></div>
         </div>
+        <div class="chat-vault-modal" id="chat-vault-modal">
+          <div class="chat-vault-backdrop"></div>
+          <div class="chat-vault-dialog">
+            <h3>Select from File Vault</h3>
+            <p class="chat-vault-hint">Click a file to add it. Add multiple if needed.</p>
+            <div class="chat-vault-list" id="chat-vault-list"></div>
+            <div class="chat-vault-actions">
+              <button class="chat-vault-done" id="chat-vault-done">Done</button>
+              <button class="chat-vault-cancel" id="chat-vault-cancel">Cancel</button>
+            </div>
+          </div>
+        </div>
       `;
 
       const input = el.querySelector("#chat-input");
@@ -465,14 +618,109 @@ const INTERNAL_PAGES = {
       const messagesInner = el.querySelector("#chat-messages-inner");
       const inputArea = el.querySelector("#chat-input-area");
       const inputFooter = el.querySelector("#chat-input-footer");
+      const attachBtn = el.querySelector("#chat-attach-btn");
+      const attachDropdown = el.querySelector("#chat-attach-dropdown");
+      const attachmentsEl = el.querySelector("#chat-attachments");
+      const vaultModal = el.querySelector("#chat-vault-modal");
+      const vaultList = el.querySelector("#chat-vault-list");
+      const vaultCancel = el.querySelector("#chat-vault-cancel");
+
+      let attachedFiles = [];
+
+      function renderAttachments() {
+        attachmentsEl.innerHTML = "";
+        for (const f of attachedFiles) {
+          const chip = document.createElement("span");
+          chip.className = "chat-attachment-chip";
+          chip.innerHTML = `<span class="chat-attachment-name">${escapeHtml(f.name)}</span><button type="button" class="chat-attachment-remove" data-id="${f.id}">×</button>`;
+          chip.querySelector(".chat-attachment-remove").addEventListener("click", () => {
+            attachedFiles = attachedFiles.filter((x) => x.id !== f.id);
+            renderAttachments();
+            updateSendState();
+          });
+          attachmentsEl.appendChild(chip);
+        }
+        attachmentsEl.style.display = attachedFiles.length ? "flex" : "none";
+      }
+
+      function escapeHtml(s) {
+        const div = document.createElement("div");
+        div.textContent = s;
+        return div.innerHTML;
+      }
+
+      function updateSendState() {
+        sendBtn.disabled = !(input.value.trim() || attachedFiles.length > 0);
+      }
+
+      attachBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        attachDropdown.classList.toggle("open");
+      });
+      document.addEventListener("click", () => attachDropdown.classList.remove("open"));
+
+      attachDropdown.querySelector('[data-source="computer"]').addEventListener("click", async () => {
+        attachDropdown.classList.remove("open");
+        const files = await window.orbit.dialog.openFiles();
+        for (const f of files) {
+          attachedFiles.push({ id: crypto.randomUUID(), name: f.name, mimeType: f.mimeType, dataUrl: f.dataUrl });
+        }
+        renderAttachments();
+        updateSendState();
+      });
+
+      attachDropdown.querySelector('[data-source="vault"]').addEventListener("click", async () => {
+        attachDropdown.classList.remove("open");
+        const files = await window.orbit.vault.list();
+        vaultList.innerHTML = "";
+        if (!files.length) {
+          vaultList.innerHTML = '<p class="chat-vault-empty">No files in vault. Add PDFs in Settings → File Vault.</p>';
+        } else {
+          for (const f of files) {
+            const btn = document.createElement("button");
+            btn.className = "chat-vault-item";
+            btn.type = "button";
+            btn.innerHTML = `<span class="chat-vault-item-name">${escapeHtml(f.original_name)}</span>`;
+            btn.addEventListener("click", async () => {
+              const content = await window.orbit.vault.getFileContent(f.id);
+              if (content) {
+                attachedFiles.push({ id: crypto.randomUUID(), name: content.name, mimeType: content.mimeType, dataUrl: content.dataUrl });
+                renderAttachments();
+                updateSendState();
+              }
+            });
+            vaultList.appendChild(btn);
+          }
+        }
+        vaultModal.classList.add("open");
+      });
+
+      vaultCancel.addEventListener("click", () => vaultModal.classList.remove("open"));
+      el.querySelector("#chat-vault-done").addEventListener("click", () => vaultModal.classList.remove("open"));
+      vaultModal.querySelector(".chat-vault-backdrop").addEventListener("click", () => vaultModal.classList.remove("open"));
 
       input.addEventListener("input", () => {
         input.style.height = "auto";
         input.style.height = Math.min(input.scrollHeight, 160) + "px";
-        sendBtn.disabled = !input.value.trim();
+        updateSendState();
       });
 
-      function addMessage(role, text) {
+      const chatMessages = [];
+
+      function buildUserContent(text, files) {
+        const parts = [];
+        if (text) parts.push({ type: "text", text });
+        for (const f of files) {
+          if (f.mimeType?.startsWith("image/")) {
+            parts.push({ type: "image_url", image_url: { url: f.dataUrl } });
+          } else if (f.mimeType === "application/pdf") {
+            parts.push({ type: "file", file: { filename: f.name, file_data: f.dataUrl } });
+          }
+        }
+        return parts.length === 1 && parts[0].type === "text" ? parts[0].text : parts.length ? parts : "";
+      }
+
+      function addMessage(role, content, options = {}) {
         const welcome = messagesInner.querySelector(".chat-welcome");
         const welcomeBlock = messagesInner.querySelector(".chat-welcome-block");
         if (welcome) welcome.remove();
@@ -484,29 +732,132 @@ const INTERNAL_PAGES = {
         const msg = document.createElement("div");
         msg.className = "chat-msg " + role;
 
-        const avatar = document.createElement("div");
-        avatar.className = "chat-msg-avatar";
-        avatar.textContent = role === "user" ? "Y" : "O";
+        const bubble = document.createElement("div");
+        bubble.className = "chat-msg-bubble";
 
         const body = document.createElement("div");
         body.className = "chat-msg-body";
-        body.textContent = text;
 
-        msg.appendChild(avatar);
-        msg.appendChild(body);
+        if (role === "user" && options.attachments?.length) {
+          if (content) {
+            const textBlock = document.createElement("div");
+            textBlock.textContent = content;
+            body.appendChild(textBlock);
+          }
+          const filesBlock = document.createElement("div");
+          filesBlock.className = "chat-msg-attachments";
+          for (const f of options.attachments) {
+            const tag = document.createElement("span");
+            tag.className = "chat-msg-file-tag";
+            tag.textContent = f.name;
+            filesBlock.appendChild(tag);
+          }
+          body.appendChild(filesBlock);
+        } else if (options.loading && role === "assistant") {
+          const loading = document.createElement("div");
+          loading.className = "chat-loading-dots";
+          loading.innerHTML = "<span></span><span></span><span></span>";
+          body.appendChild(loading);
+        } else if (role === "assistant" && typeof marked !== "undefined") {
+          body.innerHTML = marked.parse(content || "");
+        } else {
+          body.textContent = content;
+        }
+
+        bubble.appendChild(body);
+
+        if (role === "assistant" && !options.loading) {
+          const meta = document.createElement("div");
+          meta.className = "chat-msg-meta";
+          const latency = document.createElement("span");
+          latency.className = "chat-msg-latency";
+          meta.appendChild(latency);
+          const copyBtn = document.createElement("button");
+          copyBtn.className = "chat-msg-copy";
+          copyBtn.textContent = "Copy";
+          copyBtn.type = "button";
+          copyBtn.addEventListener("click", () => {
+            navigator.clipboard.writeText(content).then(() => {
+              copyBtn.textContent = "Copied!";
+              copyBtn.classList.add("copied");
+              setTimeout(() => {
+                copyBtn.textContent = "Copy";
+                copyBtn.classList.remove("copied");
+              }, 1500);
+            });
+          });
+          meta.appendChild(copyBtn);
+          bubble.appendChild(meta);
+        }
+
+        msg.appendChild(bubble);
         messagesInner.appendChild(msg);
 
         const container = el.querySelector(".chat-messages");
         container.scrollTop = container.scrollHeight;
+        return { msg, body, bubble };
       }
 
-      function handleSend() {
+      async function handleSend() {
         const text = input.value.trim();
-        if (!text) return;
-        addMessage("user", text);
+        const filesToSend = [...attachedFiles];
+        if (!text && filesToSend.length === 0) return;
+
+        addMessage("user", text, { attachments: filesToSend.map((f) => ({ name: f.name })) });
         input.value = "";
+        attachedFiles = [];
+        renderAttachments();
         input.style.height = "auto";
         sendBtn.disabled = true;
+
+        const assistantObj = addMessage("assistant", "", { loading: true });
+
+        const userContent = buildUserContent(text, filesToSend);
+        chatMessages.push({ role: "user", content: userContent });
+
+        const startTime = performance.now();
+
+        try {
+          const result = await window.orbit.agent.chat(chatMessages);
+          const latencyMs = performance.now() - startTime;
+
+          if (result.error) throw new Error(result.error);
+
+          const reply = result.content || "No response.";
+          chatMessages.push({ role: "assistant", content: reply });
+
+          const meta = document.createElement("div");
+          meta.className = "chat-msg-meta";
+          const latency = document.createElement("span");
+          latency.className = "chat-msg-latency";
+          latency.textContent = `${(latencyMs / 1000).toFixed(1)}s`;
+          meta.appendChild(latency);
+          const copyBtn = document.createElement("button");
+          copyBtn.className = "chat-msg-copy";
+          copyBtn.textContent = "Copy";
+          copyBtn.type = "button";
+          copyBtn.addEventListener("click", () => {
+            navigator.clipboard.writeText(reply).then(() => {
+              copyBtn.textContent = "Copied!";
+              copyBtn.classList.add("copied");
+              setTimeout(() => {
+                copyBtn.textContent = "Copy";
+                copyBtn.classList.remove("copied");
+              }, 1500);
+            });
+          });
+          meta.appendChild(copyBtn);
+          assistantObj.body.innerHTML = typeof marked !== "undefined" ? marked.parse(reply) : reply;
+          assistantObj.bubble.appendChild(meta);
+        } catch (err) {
+          const errorText = "Error: " + (err.message || "Failed to get response. Check your API key and model in Settings → AI Settings.");
+          assistantObj.body.innerHTML = "";
+          assistantObj.body.textContent = errorText;
+        }
+
+        updateSendState();
+        const container = el.querySelector(".chat-messages");
+        container.scrollTop = container.scrollHeight;
       }
 
       sendBtn.addEventListener("click", handleSend);
@@ -536,7 +887,7 @@ const INTERNAL_PAGES = {
       const content = document.createElement("div");
       content.className = "settings-content";
 
-      const panelKeys = Object.keys(SETTINGS_PANELS);
+      const panelKeys = ["home-page", "history", "bookmarks", "ai-settings", "file-vault"];
 
       function showPanel(key) {
         sidebar.querySelectorAll(".settings-nav-item").forEach((btn) => {
@@ -561,7 +912,11 @@ const INTERNAL_PAGES = {
       layout.appendChild(content);
       el.appendChild(layout);
 
-      showPanel(panelKeys[0]);
+      const initialPanel = window.__orbitOpenPanel && panelKeys.includes(window.__orbitOpenPanel)
+        ? window.__orbitOpenPanel
+        : panelKeys[0];
+      delete window.__orbitOpenPanel;
+      showPanel(initialPanel);
     },
   },
 };
@@ -594,6 +949,8 @@ async function createTab(url, options = {}) {
     tab = { id, title: internal.title, view, zoomLevel: 0, internalUrl: actualUrl };
   } else {
     view = document.createElement("webview");
+    const profile = await window.orbit.profile.getCurrent();
+    view.setAttribute("partition", profile ? `persist:orbit-${profile.id}` : "persist:orbit");
     view.src = actualUrl;
     view.setAttribute("autosize", "on");
     webviewContainer.appendChild(view);
@@ -628,11 +985,17 @@ async function createTab(url, options = {}) {
     });
 
     view.addEventListener("did-navigate", (e) => {
-      if (tab.id === activeTabId) urlBar.value = e.url;
+      if (tab.id === activeTabId) {
+        urlBar.value = e.url;
+        if (typeof updateBookmarkStar === "function") updateBookmarkStar();
+      }
     });
 
     view.addEventListener("did-navigate-in-page", (e) => {
-      if (e.isMainFrame && tab.id === activeTabId) urlBar.value = e.url;
+      if (e.isMainFrame && tab.id === activeTabId) {
+        urlBar.value = e.url;
+        if (typeof updateBookmarkStar === "function") updateBookmarkStar();
+      }
     });
   }
 
@@ -935,7 +1298,17 @@ btnForward.addEventListener("click", () => {
 });
 
 btnReload.addEventListener("click", () => {
-  getActiveWebview()?.reload();
+  const tab = getTab(activeTabId);
+  if (tab?.internalUrl) {
+    const internal = createInternalPage(tab.internalUrl);
+    if (internal) {
+      tab.view.replaceWith(internal.el);
+      tab.view = internal.el;
+      internal.el.classList.toggle("active", tab.id === activeTabId);
+    }
+  } else {
+    getActiveWebview()?.reload();
+  }
 });
 
 const btnHome = document.getElementById("btn-home");
@@ -952,6 +1325,85 @@ btnHome.addEventListener("click", async () => {
 });
 
 newTabBtn.addEventListener("click", () => createTab());
+
+// ── Bookmarks ────────────────────────────────────────
+
+const btnBookmark = document.getElementById("btn-bookmark");
+const bookmarkBar = document.getElementById("bookmark-bar");
+const bookmarkBarItems = document.getElementById("bookmark-bar-items");
+
+async function updateBookmarkStar() {
+  const tab = getTab(activeTabId);
+  if (!tab) return;
+  const url = tab.internalUrl || tab.view?.getURL?.() || tab.view?.src || "";
+  if (tab.internalUrl || isInternalUrl(url)) {
+    btnBookmark.style.display = "none";
+    return;
+  }
+  btnBookmark.style.display = "flex";
+  const bookmarked = await window.orbit.bookmark.isBookmarked(url);
+  btnBookmark.classList.toggle("bookmarked", !!bookmarked);
+}
+
+async function renderBookmarkBar() {
+  const items = await window.orbit.bookmark.list("Bookmarks bar");
+  bookmarkBarItems.innerHTML = "";
+  for (const bm of items) {
+    const btn = document.createElement("button");
+    btn.className = "bookmark-item";
+    btn.textContent = bm.title || bm.url;
+    btn.title = bm.title ? `${bm.title}\n${bm.url}` : bm.url;
+    btn.addEventListener("click", () => createTab(bm.url));
+    bookmarkBarItems.appendChild(btn);
+  }
+  bookmarkBar.classList.toggle("empty", items.length === 0);
+}
+
+btnBookmark.addEventListener("click", async () => {
+  const tab = getTab(activeTabId);
+  if (!tab || tab.internalUrl) return;
+  const url = tab.view?.getURL?.();
+  if (!url) return;
+  const title = tab.title || "";
+  const bookmarked = await window.orbit.bookmark.isBookmarked(url);
+  if (bookmarked) {
+    await window.orbit.bookmark.removeByUrl(url);
+  } else {
+    await window.orbit.bookmark.add(url, title);
+  }
+  updateBookmarkStar();
+  renderBookmarkBar();
+});
+
+// Update star when tab changes - wrap activateTab
+(function () {
+  const orig = activateTab;
+  activateTab = function (id) {
+    orig(id);
+    updateBookmarkStar();
+  };
+})();
+
+// When page title updates, update bookmark if URL matches
+// (handled in createTab / did-finish-load - we refresh star on activate)
+renderBookmarkBar();
+updateBookmarkStar();
+
+window.addEventListener("orbit:bookmarksChanged", renderBookmarkBar);
+
+const menuBookmarks = document.getElementById("menu-bookmarks");
+menuBookmarks.addEventListener("click", () => {
+  closeDropdown();
+  const existing = tabs.find((t) => t.internalUrl === SETTINGS_URL);
+  if (existing) {
+    activateTab(existing.id);
+    const panelBtn = document.querySelector('.settings-nav-item[data-panel="bookmarks"]');
+    if (panelBtn) panelBtn.click();
+  } else {
+    window.__orbitOpenPanel = "bookmarks";
+    createTab(SETTINGS_URL);
+  }
+});
 
 // ── Agent panel ───────────────────────────────────
 
@@ -1062,6 +1514,113 @@ agentResizeHandle.addEventListener("mousedown", (e) => {
   document.addEventListener("mouseup", onUp);
 });
 
+// ── Profile dropdown (next to agent) ───────────────
+
+const btnProfile = document.getElementById("btn-profile");
+const profileDropdown = document.getElementById("profile-dropdown");
+const profileDropdownCurrent = document.getElementById("profile-dropdown-current");
+const profileDropdownList = document.getElementById("profile-dropdown-list");
+const profileAddName = document.getElementById("profile-add-name");
+const profileAddBtn = document.getElementById("profile-add-btn");
+const profileDropdownError = document.getElementById("profile-dropdown-error");
+
+function closeProfileDropdown() {
+  profileDropdown.classList.remove("open");
+  dropdownOverlay.classList.remove("visible");
+  btnProfile.closest(".toolbar-profile-agent-wrap")?.classList.remove("profile-open");
+}
+
+function openProfileDropdown() {
+  dropdownMenu.classList.remove("open");
+  menuAnchor.classList.remove("is-open");
+  profileDropdown.classList.add("open");
+  btnProfile.closest(".toolbar-profile-agent-wrap")?.classList.add("profile-open");
+  dropdownOverlay.classList.add("visible");
+  dropdownOverlay.classList.add("visible");
+  renderProfileDropdown();
+  profileAddName.value = "";
+  profileDropdownError.textContent = "";
+}
+
+async function renderProfileDropdown() {
+  const [profiles, current] = await Promise.all([
+    window.orbit.profile.list(),
+    window.orbit.profile.getCurrent(),
+  ]);
+  profileDropdownCurrent.innerHTML = "Current profile<strong>" + (current ? current.name : "—") + "</strong>";
+  profileDropdownList.innerHTML = "";
+  for (const p of profiles) {
+    const item = document.createElement("div");
+    item.className = "profile-dropdown-item" + (current?.id === p.id ? " current" : "");
+    const name = document.createElement("span");
+    name.className = "profile-dropdown-item-name";
+    name.textContent = p.name;
+    item.appendChild(name);
+    const actions = document.createElement("div");
+    actions.className = "profile-dropdown-item-actions";
+    if (current?.id !== p.id) {
+      const switchBtn = document.createElement("button");
+      switchBtn.className = "profile-dropdown-item-btn";
+      switchBtn.textContent = "Switch";
+      switchBtn.addEventListener("click", async () => {
+        const r = await window.orbit.profile.switch(p.id);
+        if (r?.error) profileDropdownError.textContent = r.error;
+      });
+      actions.appendChild(switchBtn);
+    }
+    if (profiles.length > 1) {
+      const delBtn = document.createElement("button");
+      delBtn.className = "profile-dropdown-item-btn danger";
+      delBtn.textContent = "Delete";
+      delBtn.addEventListener("click", async () => {
+        if (!confirm(`Delete "${p.name}"? All bookmarks, history, and vault files will be permanently removed.`)) return;
+        const r = await window.orbit.profile.delete(p.id);
+        if (r?.error) {
+          profileDropdownError.textContent = r.error;
+        } else {
+          renderProfileDropdown();
+          profileDropdownError.textContent = "";
+        }
+      });
+      actions.appendChild(delBtn);
+    }
+    item.appendChild(actions);
+    profileDropdownList.appendChild(item);
+  }
+}
+
+btnProfile.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (profileDropdown.classList.contains("open")) {
+    closeProfileDropdown();
+  } else {
+    openProfileDropdown();
+  }
+});
+
+profileAddBtn.addEventListener("click", async () => {
+  const name = profileAddName.value.trim();
+  if (!name) { profileDropdownError.textContent = "Enter a name"; return; }
+  profileDropdownError.textContent = "";
+  profileAddBtn.disabled = true;
+  try {
+    const r = await window.orbit.profile.create(name, false);
+    if (r?.error) {
+      profileDropdownError.textContent = r.error;
+    } else {
+      profileAddName.value = "";
+      await renderProfileDropdown();
+    }
+  } catch (e) {
+    profileDropdownError.textContent = e.message || "Failed";
+  }
+  profileAddBtn.disabled = false;
+});
+
+profileAddName.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") profileAddBtn.click();
+});
+
 // ── Dropdown menu ────────────────────────────────
 
 const btnMenu = document.getElementById("btn-menu");
@@ -1074,19 +1633,26 @@ const zoomLevelLabel = document.getElementById("zoom-level");
 
 function closeDropdown() {
   dropdownMenu.classList.remove("open");
-  dropdownOverlay.classList.remove("visible");
   menuAnchor.classList.remove("is-open");
+  if (!profileDropdown.classList.contains("open")) dropdownOverlay.classList.remove("visible");
 }
 
 btnMenu.addEventListener("click", (e) => {
   e.stopPropagation();
+  if (profileDropdown.classList.contains("open")) closeProfileDropdown();
   dropdownMenu.classList.toggle("open");
   dropdownOverlay.classList.toggle("visible", dropdownMenu.classList.contains("open"));
   menuAnchor.classList.toggle("is-open", dropdownMenu.classList.contains("open"));
   if (dropdownMenu.classList.contains("open")) updateZoomLabel();
 });
 
-dropdownOverlay.addEventListener("click", closeDropdown);
+dropdownOverlay.addEventListener("click", () => {
+  dropdownMenu.classList.remove("open");
+  menuAnchor.classList.remove("is-open");
+  profileDropdown.classList.remove("open");
+  btnProfile.closest(".toolbar-profile-agent-wrap")?.classList.remove("profile-open");
+  dropdownOverlay.classList.remove("visible");
+});
 
 const menuNewTab = document.getElementById("menu-new-tab");
 menuNewTab.addEventListener("click", () => {
@@ -1187,6 +1753,10 @@ document.addEventListener("keydown", (e) => {
   if (mod && e.key === "0") {
     e.preventDefault();
     zoomReset();
+  }
+  if (mod && e.key === "d") {
+    e.preventDefault();
+    if (btnBookmark && btnBookmark.style.display !== "none") btnBookmark.click();
   }
 });
 

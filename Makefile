@@ -1,7 +1,7 @@
 .PHONY: install run clean
 
 install:
-	npm install
+	npm install --legacy-peer-deps
 	npx @electron/rebuild
 
 run:

@@ -6,26 +6,28 @@
 
 **A minimal, feature-rich browser built with Electron.**
 
-Orbit is a desktop browser focused on simplicity and modern web standards. Built on Electron and Chromium, it provides a clean interface for browsing, with built-in tools for history, settings, and local file management.
+Orbit is a desktop browser focused on simplicity and modern web standards. Built on Electron and Chromium, it provides a clean interface for browsing, with built-in tools for history, settings, AI assistance, and local file management.
 
 ---
 
 ## Features
 
-- **Omnibox** — Chrome-style address bar with inline autocomplete, history suggestions, and Tab/Right arrow to accept completion
-- **Tab Management** — Native-style tabs with favicons and loading indicators
-- **orbit://home** — Custom start page with quick navigation and search
-- **File Vault** — Secure local storage for PDFs and documents, accessible via `orbit-vault://`
-- **History** — Full browsing history with lazy-loading infinite scroll
-- **Settings** — Configurable home page, AI API settings, and more
-- **Agent Panel** — Integrated AI assistant side panel (optional)
-- **Dark Theme** — Low-contrast dark UI for comfortable viewing
+- **Profiles** — Separate bookmarks, history, settings, and file vault per profile. Switch between profiles or run multiple windows with different profiles at once.
+- **Omnibox** — Chrome-style address bar with inline autocomplete, history suggestions, and Tab/Right arrow to accept completion.
+- **Tab Management** — Native-style tabs with favicons and loading indicators.
+- **orbit://home** — Custom start page with quick navigation, search, and vault access.
+- **File Vault** — Local storage for PDFs, accessible via `orbit-vault://`. Each profile has its own vault.
+- **History** — Full browsing history with lazy-loading infinite scroll.
+- **Bookmarks** — Save and organize bookmarks in the Bookmarks bar and Settings.
+- **Settings** — Configurable home page, AI API settings (OpenRouter / Gemini), and file vault.
+- **Agent Panel** — Integrated AI assistant side panel with optional web search (Tavily).
+- **Dark Theme** — Low-contrast dark UI for comfortable viewing.
 
 ---
 
 ## Requirements
 
-- **Node.js** 18+ 
+- **Node.js** 18+
 - **npm** 9+
 
 ---
@@ -38,11 +40,15 @@ cd Orbit
 make install
 ```
 
+---
+
 ## Usage
 
 ```bash
 make run
 ```
+
+On first run, you’ll be prompted to create a profile. Each profile has its own bookmarks, history, settings, and file vault.
 
 ---
 
@@ -51,11 +57,14 @@ make run
 ```
 Orbit/
 ├── src/
-│   ├── main.js       # Electron main process
-│   ├── preload.js    # Context bridge (orbit API)
-│   ├── renderer.js   # UI logic, tabs, omnibox, settings
-│   ├── db.js         # SQLite (history, settings, vault)
-│   └── index.html    # App shell & styles
+│   ├── main.js           # Electron main process, IPC handlers
+│   ├── preload.js        # Context bridge (orbit API)
+│   ├── renderer.js       # UI logic, tabs, omnibox, settings, agent panel
+│   ├── index.html        # App shell & styles
+│   ├── profile-setup.html # First-run profile creation
+│   ├── db.js             # SQLite (per-profile history, settings, vault)
+│   ├── profiles.js       # Profile metadata & storage paths
+│   └── agent.js          # AI chat (OpenRouter, Gemini)
 ├── assets/
 │   └── orbit-logo.png
 ├── Makefile
@@ -68,11 +77,13 @@ Orbit/
 ## Tech Stack
 
 - [Electron](https://www.electronjs.org/) — Cross-platform desktop app framework
-- [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) — Embedded SQLite for history and settings
+- [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) — Embedded SQLite for history, settings, bookmarks, and vault metadata
+- [LangChain](https://js.langchain.com/) — AI integrations (OpenRouter, Google Gemini)
+- [marked](https://marked.js.org/) — Markdown rendering in chat
 - Chromium — Web rendering engine
 
 ---
 
 ## License
 
-MIT
+Apache 2.0
