@@ -1,0 +1,16 @@
+{
+  "name": "orbit",
+  "version": "0.1.0",
+  "description": "Orbit — a browser built with Electron",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
+    "electron": "^34.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2"
+  }
+}
