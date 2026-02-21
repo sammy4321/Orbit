@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("orbit", {
     create: (name, fromGateway = false) => ipcRenderer.invoke("profile:create", name, fromGateway),
     switch: (id) => ipcRenderer.invoke("profile:switch", id),
     update: (id, name) => ipcRenderer.invoke("profile:update", id, name),
+    updateColor: (id, color) => ipcRenderer.invoke("profile:updateColor", id, color),
     delete: (id) => ipcRenderer.invoke("profile:delete", id),
   },
   history: {

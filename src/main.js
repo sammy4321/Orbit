@@ -41,12 +41,13 @@ function createWindow(profileId) {
     },
   });
 
-  windowProfiles.set(win.webContents.id, effectiveProfileId);
+  const wcId = win.webContents.id;
+  windowProfiles.set(wcId, effectiveProfileId);
   win.webContents.on("did-finish-load", () => {
-    if (!win.isDestroyed()) windowProfiles.set(win.webContents.id, effectiveProfileId);
+    if (!win.isDestroyed()) windowProfiles.set(wcId, effectiveProfileId);
   });
   win.on("closed", () => {
-    windowProfiles.delete(win.webContents.id);
+    windowProfiles.delete(wcId);
   });
 
   win.loadFile(path.join(__dirname, "index.html"));
@@ -92,7 +93,7 @@ function setupIpc() {
     const id = windowProfiles.get(e.sender.id) ?? profiles.getCurrent();
     if (!id) return null;
     const p = profiles.get(id);
-    return p ? { id: p.id, name: p.name } : null;
+    return p ? { id: p.id, name: p.name, color: p.color } : null;
   });
 
   ipcMain.handle("profile:create", (e, name, fromGateway = false) => {
@@ -119,6 +120,11 @@ function setupIpc() {
   ipcMain.handle("profile:update", (_e, id, name) => {
     if (!name || !String(name).trim()) return { error: "Name is required" };
     profiles.update(id, String(name).trim());
+    return { success: true };
+  });
+
+  ipcMain.handle("profile:updateColor", (_e, id, color) => {
+    profiles.updateColor(id, color);
     return { success: true };
   });
 

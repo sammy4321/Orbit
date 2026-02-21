@@ -1517,8 +1517,13 @@ agentResizeHandle.addEventListener("mousedown", (e) => {
 // ── Profile dropdown (next to agent) ───────────────
 
 const btnProfile = document.getElementById("btn-profile");
+const profileAvatar = document.getElementById("profile-avatar");
 const profileDropdown = document.getElementById("profile-dropdown");
-const profileDropdownCurrent = document.getElementById("profile-dropdown-current");
+const profileDropdownCurrentAvatarWrap = document.getElementById("profile-dropdown-current-avatar-wrap");
+const profileDropdownCurrentAvatar = document.getElementById("profile-dropdown-current-avatar");
+const profileDropdownEyedropper = document.getElementById("profile-dropdown-eyedropper");
+const profileDropdownCurrentName = document.getElementById("profile-dropdown-current-name");
+const profileColorInput = document.getElementById("profile-color-input");
 const profileDropdownList = document.getElementById("profile-dropdown-list");
 const profileAddName = document.getElementById("profile-add-name");
 const profileAddBtn = document.getElementById("profile-add-btn");
@@ -1542,19 +1547,53 @@ function openProfileDropdown() {
   profileDropdownError.textContent = "";
 }
 
+function renderProfileAvatar(profile) {
+  if (!profileAvatar) return;
+  if (!profile) {
+    profileAvatar.style.background = "var(--text-dim)";
+    profileAvatar.innerHTML = '<span class="profile-avatar-placeholder">—</span>';
+    return;
+  }
+  const color = profile.color || "#5b8def";
+  const letter = profile.name?.charAt(0)?.toUpperCase() || "?";
+  profileAvatar.style.background = color;
+  profileAvatar.innerHTML = "";
+  profileAvatar.textContent = letter;
+}
+
 async function renderProfileDropdown() {
-  const [profiles, current] = await Promise.all([
+  const [profileList, current] = await Promise.all([
     window.orbit.profile.list(),
     window.orbit.profile.getCurrent(),
   ]);
-  profileDropdownCurrent.innerHTML = "Current profile<strong>" + (current ? current.name : "—") + "</strong>";
+  renderProfileAvatar(current);
+
+  if (profileDropdownCurrentAvatarWrap && profileDropdownCurrentAvatar) {
+    if (current) {
+      profileDropdownCurrentAvatarWrap.style.display = "";
+      profileDropdownCurrentAvatar.style.background = current.color || "#5b8def";
+      profileDropdownCurrentAvatar.textContent = current.name?.charAt(0)?.toUpperCase() || "?";
+      profileDropdownCurrentAvatar.style.display = "flex";
+    } else {
+      profileDropdownCurrentAvatarWrap.style.display = "none";
+    }
+  }
+  if (profileDropdownCurrentName) {
+    profileDropdownCurrentName.textContent = current ? current.name : "—";
+  }
+
   profileDropdownList.innerHTML = "";
-  for (const p of profiles) {
+  for (const p of profileList) {
     const item = document.createElement("div");
     item.className = "profile-dropdown-item" + (current?.id === p.id ? " current" : "");
+    const avatar = document.createElement("span");
+    avatar.className = "profile-dropdown-item-avatar";
+    avatar.style.background = p.color || "#5b8def";
+    avatar.textContent = p.name?.charAt(0)?.toUpperCase() || "?";
     const name = document.createElement("span");
     name.className = "profile-dropdown-item-name";
     name.textContent = p.name;
+    item.appendChild(avatar);
     item.appendChild(name);
     const actions = document.createElement("div");
     actions.className = "profile-dropdown-item-actions";
@@ -1568,7 +1607,7 @@ async function renderProfileDropdown() {
       });
       actions.appendChild(switchBtn);
     }
-    if (profiles.length > 1) {
+    if (profileList.length > 1) {
       const delBtn = document.createElement("button");
       delBtn.className = "profile-dropdown-item-btn danger";
       delBtn.textContent = "Delete";
@@ -1620,6 +1659,31 @@ profileAddBtn.addEventListener("click", async () => {
 profileAddName.addEventListener("keydown", (e) => {
   if (e.key === "Enter") profileAddBtn.click();
 });
+
+async function saveProfileColor(color) {
+  const current = await window.orbit.profile.getCurrent();
+  if (!current) return;
+  await window.orbit.profile.updateColor(current.id, color);
+  renderProfileAvatar({ ...current, color });
+  if (profileDropdownCurrentAvatar) {
+    profileDropdownCurrentAvatar.style.background = color;
+  }
+  profileDropdownError.textContent = "";
+}
+
+if (profileDropdownEyedropper && profileColorInput) {
+  profileDropdownEyedropper.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const current = await window.orbit.profile.getCurrent();
+    if (!current) return;
+    profileColorInput.value = current.color || "#5b8def";
+    profileColorInput.click();
+  });
+
+  profileColorInput.addEventListener("change", async () => {
+    await saveProfileColor(profileColorInput.value);
+  });
+}
 
 // ── Dropdown menu ────────────────────────────────
 
@@ -1763,3 +1827,5 @@ document.addEventListener("keydown", (e) => {
 // ── Boot ─────────────────────────────────────────
 
 createTab();
+
+window.orbit.profile.getCurrent().then(renderProfileAvatar);

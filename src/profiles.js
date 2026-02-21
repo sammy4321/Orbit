@@ -2,7 +2,12 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 const { app } = require("electron");
-const { randomUUID } = require("crypto");
+const { randomUUID, randomInt } = require("crypto");
+
+const PROFILE_COLORS = [
+  "#5b8def", "#e85d75", "#6bdb7a", "#f0b429", "#b388ff",
+  "#42a5f5", "#ef5350", "#66bb6a", "#ffa726", "#ab47bc",
+];
 
 let metaDb;
 let profilesDir;
@@ -51,9 +56,13 @@ function init() {
     CREATE TABLE IF NOT EXISTS profiles (
       id   TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      color TEXT DEFAULT NULL,
       created_at DATETIME DEFAULT (datetime('now'))
     )
   `);
+
+  const columns = metaDb.prepare("PRAGMA table_info(profiles)").all().map((c) => c.name);
+  if (!columns.includes("color")) metaDb.exec("ALTER TABLE profiles ADD COLUMN color TEXT");
 
   metaDb.exec(`
     CREATE TABLE IF NOT EXISTS meta (
@@ -64,7 +73,16 @@ function init() {
 
   getProfilesDir();
 
-  return migrateLegacyIfNeeded();
+  migrateLegacyIfNeeded();
+  migrateProfileAvatars();
+}
+
+function migrateProfileAvatars() {
+  const rows = metaDb.prepare("SELECT id FROM profiles WHERE color IS NULL").all();
+  for (const row of rows) {
+    const color = PROFILE_COLORS[randomInt(0, PROFILE_COLORS.length)];
+    metaDb.prepare("UPDATE profiles SET color = ? WHERE id = ?").run(color, row.id);
+  }
 }
 
 function migrateLegacyIfNeeded() {
@@ -98,28 +116,35 @@ function migrateLegacyIfNeeded() {
 
 function list() {
   return metaDb.prepare(
-    "SELECT id, name, created_at FROM profiles ORDER BY created_at ASC"
+    "SELECT id, name, color, created_at FROM profiles ORDER BY created_at ASC"
   ).all();
 }
 
 function create(id, name) {
   const finalId = id || randomUUID();
+  const color = PROFILE_COLORS[randomInt(0, PROFILE_COLORS.length)];
   const stmt = metaDb.prepare(
-    "INSERT INTO profiles (id, name) VALUES (?, ?)"
+    "INSERT INTO profiles (id, name, color) VALUES (?, ?, ?)"
   );
-  stmt.run(finalId, name || "New Profile");
+  stmt.run(finalId, name || "New Profile", color);
   return finalId;
 }
 
 function get(id) {
   return metaDb.prepare(
-    "SELECT id, name, created_at FROM profiles WHERE id = ?"
+    "SELECT id, name, color, created_at FROM profiles WHERE id = ?"
   ).get(id);
 }
 
 function update(id, name) {
   const stmt = metaDb.prepare("UPDATE profiles SET name = ? WHERE id = ?");
   return stmt.run(name, id);
+}
+
+function updateColor(id, color) {
+  if (!color || !/^#[0-9a-fA-F]{6}$/.test(color)) return;
+  const stmt = metaDb.prepare("UPDATE profiles SET color = ? WHERE id = ?");
+  return stmt.run(color, id);
 }
 
 function remove(id) {
@@ -151,6 +176,7 @@ module.exports = {
   create,
   get,
   update,
+  updateColor,
   remove,
   getCurrent,
   setCurrent,
