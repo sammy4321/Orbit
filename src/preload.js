@@ -66,5 +66,7 @@ contextBridge.exposeInMainWorld("orbit", {
   },
   agent: {
     chat: (messages) => ipcRenderer.invoke("agent:chat", messages),
+    browserPlan: (payload) => ipcRenderer.invoke("agent:browserPlan", payload),
+    wsInfo: () => ipcRenderer.invoke("agent:wsInfo"),
   },
 });

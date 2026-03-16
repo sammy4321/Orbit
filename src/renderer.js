@@ -1410,10 +1410,13 @@ menuBookmarks.addEventListener("click", () => {
 const btnAgent = document.getElementById("btn-agent");
 const agentPanel = document.getElementById("agent-panel");
 const agentPanelClose = document.getElementById("agent-panel-close");
+const agentPanelReset = document.getElementById("agent-panel-reset");
 const agentResizeHandle = document.getElementById("agent-resize-handle");
 const agentPanelMessages = document.getElementById("agent-panel-messages");
 const agentInput = document.getElementById("agent-input");
 const agentSendBtn = document.getElementById("agent-send-btn");
+const agentAttachBtn = document.getElementById("agent-attach-btn");
+const agentAttachmentsEl = document.getElementById("agent-attachments");
 const mainContent = document.getElementById("main-content");
 
 let agentPanelWidth = 20;
@@ -1427,6 +1430,25 @@ function openAgentPanel() {
 function closeAgentPanel() {
   agentPanel.classList.remove("open");
   btnAgent.classList.remove("active");
+}
+
+function resetAgentConversation() {
+  browserAgentThread.length = 0;
+  browserAgentGoal = "";
+  browserAgentAttachments = [];
+  draftAgentAttachments = [];
+  activeAgentRun = null;
+  setBrowserAgentBusy(false);
+  agentPanelMessages.innerHTML = `
+    <div class="agent-welcome">
+      <p>How can I help?</p>
+      <span>Ask about the page you're viewing or anything else.</span>
+    </div>
+  `;
+  agentInput.value = "";
+  agentInput.style.height = "auto";
+  renderAgentAttachments();
+  updateAgentSendState();
 }
 
 function toggleAgentPanel() {
@@ -1444,11 +1466,32 @@ function toggleAgentPanel() {
 
 btnAgent.addEventListener("click", toggleAgentPanel);
 agentPanelClose.addEventListener("click", closeAgentPanel);
+agentPanelReset.addEventListener("click", resetAgentConversation);
 
 agentInput.addEventListener("input", () => {
   agentInput.style.height = "auto";
   agentInput.style.height = Math.min(agentInput.scrollHeight, 160) + "px";
-  agentSendBtn.disabled = !agentInput.value.trim();
+  updateAgentSendState();
+});
+
+agentAttachBtn.addEventListener("click", async () => {
+  if (browserAgentBusy) return;
+  try {
+    const files = await window.orbit.dialog.openFiles();
+    if (!Array.isArray(files) || files.length === 0) return;
+    for (const f of files) {
+      draftAgentAttachments.push({
+        id: crypto.randomUUID(),
+        name: f.name,
+        mimeType: f.mimeType,
+        dataUrl: f.dataUrl,
+      });
+    }
+    renderAgentAttachments();
+    updateAgentSendState();
+  } catch (err) {
+    addAgentMessage("assistant", `Could not attach files: ${err.message || "Unknown error."}`);
+  }
 });
 
 function addAgentMessage(role, text) {
@@ -1459,7 +1502,11 @@ function addAgentMessage(role, text) {
   msg.className = "agent-msg " + role;
   const avatar = document.createElement("div");
   avatar.className = "agent-msg-avatar";
-  avatar.textContent = role === "user" ? "Y" : "O";
+  if (role === "user") {
+    avatar.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M4.5 19a7.5 7.5 0 0 1 15 0"></path></svg>`;
+  } else {
+    avatar.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="7" width="11" height="10" rx="3"></rect><circle cx="10" cy="12" r="1.1"></circle><circle cx="14" cy="12" r="1.1"></circle><path d="M9.5 15h5"></path><path d="M12 4v3"></path></svg>`;
+  }
   const body = document.createElement("div");
   body.className = "agent-msg-body";
   body.textContent = text;
@@ -1469,13 +1516,621 @@ function addAgentMessage(role, text) {
   agentPanelMessages.scrollTop = agentPanelMessages.scrollHeight;
 }
 
-agentSendBtn.addEventListener("click", () => {
-  const text = agentInput.value.trim();
+const browserAgentOverlay = document.getElementById("browser-agent-overlay");
+const browserAgentThread = [];
+let browserAgentBusy = false;
+let browserAgentGoal = "";
+let browserAgentAttachments = [];
+let draftAgentAttachments = [];
+let activeAgentRun = null;
+let agentRunCounter = 0;
+let browserAgentWs = null;
+let browserAgentWsInfo = null;
+const browserAgentWsPending = new Map();
+
+function setBrowserAgentBusy(isBusy, label = "Orbit is working...") {
+  browserAgentBusy = isBusy;
+  if (browserAgentOverlay) {
+    browserAgentOverlay.classList.toggle("active", isBusy);
+    const text = browserAgentOverlay.querySelector(".browser-agent-overlay-text");
+    if (text) text.textContent = label;
+  }
+  agentSendBtn.disabled = isBusy || !(agentInput.value.trim() || draftAgentAttachments.length);
+}
+
+function resetBrowserAgentWsConnection() {
+  if (browserAgentWs) {
+    try {
+      browserAgentWs.close();
+    } catch {}
+  }
+  browserAgentWs = null;
+  browserAgentWsInfo = null;
+  for (const pending of browserAgentWsPending.values()) {
+    pending.reject(new Error("Browser agent socket disconnected."));
+  }
+  browserAgentWsPending.clear();
+}
+
+function handleBrowserAgentWsMessage(raw) {
+  let msg;
+  try {
+    msg = JSON.parse(String(raw?.data || "{}"));
+  } catch {
+    return;
+  }
+  if (msg?.type !== "browser.plan.result") return;
+  const requestId = msg.requestId;
+  if (!requestId) return;
+  const pending = browserAgentWsPending.get(requestId);
+  if (!pending) return;
+  browserAgentWsPending.delete(requestId);
+  pending.resolve(msg.result || { error: "Empty websocket result." });
+}
+
+async function ensureBrowserAgentWsConnection() {
+  if (browserAgentWs && browserAgentWs.readyState === WebSocket.OPEN) return;
+
+  const info = await window.orbit.agent.wsInfo();
+  if (info?.error || !info?.url || !info?.token) {
+    throw new Error(info?.error || "WebSocket info unavailable.");
+  }
+  browserAgentWsInfo = info;
+
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${info.url}?token=${encodeURIComponent(info.token)}`);
+    let settled = false;
+
+    ws.addEventListener("open", () => {
+      browserAgentWs = ws;
+      ws.addEventListener("message", handleBrowserAgentWsMessage);
+      ws.addEventListener("close", () => {
+        if (browserAgentWs === ws) resetBrowserAgentWsConnection();
+      });
+      ws.addEventListener("error", () => {
+        if (browserAgentWs === ws) resetBrowserAgentWsConnection();
+      });
+      settled = true;
+      resolve();
+    });
+
+    ws.addEventListener("error", () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("Failed to connect browser agent websocket."));
+    });
+  });
+}
+
+async function requestBrowserPlan(payload) {
+  try {
+    await ensureBrowserAgentWsConnection();
+    if (!browserAgentWs || browserAgentWs.readyState !== WebSocket.OPEN) {
+      throw new Error("Browser agent websocket not open.");
+    }
+
+    const requestId = crypto.randomUUID();
+    const resultPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        browserAgentWsPending.delete(requestId);
+        reject(new Error("Browser agent websocket request timed out."));
+      }, 70000);
+      browserAgentWsPending.set(requestId, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      });
+    });
+
+    browserAgentWs.send(
+      JSON.stringify({
+        type: "browser.plan",
+        requestId,
+        payload,
+      })
+    );
+    return await resultPromise;
+  } catch (err) {
+    console.warn("[Orbit Agent] WebSocket planner unavailable, falling back to IPC:", err.message);
+    return window.orbit.agent.browserPlan(payload);
+  }
+}
+
+function normalizeAgentText(s) {
+  return String(s || "").replace(/\s+/g, " ").trim();
+}
+
+function appendToAgentThread(role, content) {
+  const text = normalizeAgentText(content);
   if (!text) return;
-  addAgentMessage("user", text);
+  browserAgentThread.push({ role, content: text });
+  if (browserAgentThread.length > 30) browserAgentThread.shift();
+}
+
+function updateAgentSendState() {
+  agentSendBtn.disabled = browserAgentBusy || !(agentInput.value.trim() || draftAgentAttachments.length);
+}
+
+function renderAgentAttachments() {
+  if (!agentAttachmentsEl) return;
+  agentAttachmentsEl.innerHTML = "";
+  for (const f of draftAgentAttachments) {
+    const chip = document.createElement("span");
+    chip.className = "chat-attachment-chip";
+    chip.innerHTML =
+      `<span class="chat-attachment-name"></span>` +
+      `<button type="button" class="chat-attachment-remove" data-id="${f.id}">×</button>`;
+    chip.querySelector(".chat-attachment-name").textContent = f.name || "attachment";
+    chip.querySelector(".chat-attachment-remove").addEventListener("click", () => {
+      draftAgentAttachments = draftAgentAttachments.filter((x) => x.id !== f.id);
+      renderAgentAttachments();
+      updateAgentSendState();
+    });
+    agentAttachmentsEl.appendChild(chip);
+  }
+  agentAttachmentsEl.style.display = draftAgentAttachments.length ? "flex" : "none";
+}
+
+function goalLikelyNeedsInteraction(goal) {
+  return /\b(go to|goto|open|navigate|visit|click|select|choose|enter|search)\b/i.test(
+    String(goal || "")
+  );
+}
+
+function extractRequestedDomain(goal) {
+  const text = String(goal || "").toLowerCase();
+  const explicit = text.match(/(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+\.[a-z]{2,})(?:\/|\b)/i);
+  if (explicit?.[1]) return explicit[1].toLowerCase();
+  if (/\blinkedin\b/i.test(text)) return "linkedin.com";
+  if (/\byoutube\b/i.test(text)) return "youtube.com";
+  if (/\bwikipedia\b/i.test(text)) return "wikipedia.org";
+  if (/\bgithub\b/i.test(text)) return "github.com";
+  return "";
+}
+
+function actionLabel(action) {
+  if (!action || !action.type) return "Unknown step";
+  if (action.type === "navigate") {
+    const raw = String(action.url || "").trim();
+    if (!raw) return "Open target website";
+    try {
+      const u = new URL(raw);
+      const host = u.hostname.replace(/^www\./, "");
+      return `Open ${host}`;
+    } catch {
+      return `Open ${raw}`;
+    }
+  }
+  if (action.type === "click") {
+    return "Open selected item";
+  }
+  if (action.type === "type") {
+    const text = String(action.text || "").trim();
+    if (!text) return "Fill in the field";
+    const short = text.length > 28 ? `${text.slice(0, 28)}...` : text;
+    return `Enter "${short}"`;
+  }
+  if (action.type === "press") {
+    const key = String(action.key || "Enter");
+    return key.toLowerCase() === "enter" ? "Submit current input" : `Press ${key}`;
+  }
+  if (action.type === "scroll") {
+    return action.direction === "up" ? "Scroll up the page" : "Scroll down the page";
+  }
+  if (action.type === "wait") {
+    const seconds = Math.max(0.1, (Number(action.ms) || 900) / 1000);
+    return `Wait ${seconds.toFixed(seconds >= 1 ? 1 : 2)}s for page update`;
+  }
+  return action.type;
+}
+
+function ensureAgentRun(goal) {
+  if (activeAgentRun) return activeAgentRun;
+  const welcome = agentPanelMessages.querySelector(".agent-welcome");
+  if (welcome) welcome.remove();
+
+  const card = document.createElement("section");
+  card.className = "agent-run-card";
+  card.innerHTML = `
+    <div class="agent-run-head">
+      <span class="agent-run-title">Browser run</span>
+      <span class="agent-run-badge planning">Planning</span>
+    </div>
+    <div class="agent-run-goal"></div>
+    <div class="agent-run-progress">
+      <div class="agent-run-progress-fill"></div>
+    </div>
+    <div class="agent-run-progress-meta">
+      <span class="agent-run-stage">Analyzing page...</span>
+      <span class="agent-run-percent">0%</span>
+    </div>
+    <div class="agent-run-steps"></div>
+  `;
+  card.querySelector(".agent-run-goal").textContent = goal || "New task";
+  agentPanelMessages.appendChild(card);
+  activeAgentRun = {
+    id: ++agentRunCounter,
+    card,
+    badge: card.querySelector(".agent-run-badge"),
+    stage: card.querySelector(".agent-run-stage"),
+    percent: card.querySelector(".agent-run-percent"),
+    progressFill: card.querySelector(".agent-run-progress-fill"),
+    steps: card.querySelector(".agent-run-steps"),
+    stepEls: new Map(),
+    totalSteps: 0,
+    completedSteps: 0,
+  };
+  agentPanelMessages.scrollTop = agentPanelMessages.scrollHeight;
+  return activeAgentRun;
+}
+
+function setRunBadge(state, text) {
+  const run = activeAgentRun;
+  if (!run) return;
+  run.badge.className = `agent-run-badge ${state}`;
+  run.badge.textContent = text;
+}
+
+function setRunStage(text) {
+  const run = activeAgentRun;
+  if (!run) return;
+  run.stage.textContent = text;
+}
+
+function updateRunProgress() {
+  const run = activeAgentRun;
+  if (!run) return;
+  const pct =
+    run.totalSteps > 0
+      ? Math.min(100, Math.round((run.completedSteps / run.totalSteps) * 100))
+      : 0;
+  run.progressFill.style.width = `${pct}%`;
+  run.percent.textContent = `${pct}%`;
+}
+
+function createStepEl(label, state = "pending", detail = "") {
+  const el = document.createElement("div");
+  el.className = `agent-run-step ${state}`;
+  el.innerHTML = `
+    <span class="agent-run-step-dot"></span>
+    <div class="agent-run-step-body">
+      <div class="agent-run-step-label"></div>
+      <div class="agent-run-step-detail"></div>
+    </div>
+  `;
+  el.querySelector(".agent-run-step-label").textContent = label;
+  el.querySelector(".agent-run-step-detail").textContent = detail;
+  return el;
+}
+
+function addRunStep(action, state = "pending", detail = "") {
+  const run = activeAgentRun;
+  if (!run) return null;
+  const stepId = `step-${run.id}-${run.stepEls.size + 1}`;
+  const el = createStepEl(actionLabel(action), state, detail);
+  el.dataset.stepId = stepId;
+  run.steps.appendChild(el);
+  run.stepEls.set(stepId, el);
+  run.totalSteps += 1;
+  if (state === "done") run.completedSteps += 1;
+  updateRunProgress();
+  agentPanelMessages.scrollTop = agentPanelMessages.scrollHeight;
+  return stepId;
+}
+
+function updateRunStep(stepId, state, detail = "") {
+  const run = activeAgentRun;
+  if (!run || !stepId) return;
+  const el = run.stepEls.get(stepId);
+  if (!el) return;
+  const previous = el.className.match(/agent-run-step\s+([a-z-]+)/)?.[1];
+  if (previous !== "done" && state === "done") run.completedSteps += 1;
+  if (previous === "done" && state !== "done") run.completedSteps = Math.max(0, run.completedSteps - 1);
+  el.className = `agent-run-step ${state}`;
+  const detailEl = el.querySelector(".agent-run-step-detail");
+  if (detailEl) detailEl.textContent = detail;
+  updateRunProgress();
+  agentPanelMessages.scrollTop = agentPanelMessages.scrollHeight;
+}
+
+function markRunFinished(state, stageText, badgeText) {
+  setRunStage(stageText);
+  setRunBadge(state, badgeText);
+}
+
+async function capturePageSnapshot(webview) {
+  const script = `
+    (() => {
+      const now = Date.now().toString(36);
+      let idx = 0;
+      const MAX_ELEMENTS = 80;
+      const selector = 'a,button,input,textarea,select,[role="button"],[contenteditable="true"],[onclick]';
+      const nodes = Array.from(document.querySelectorAll(selector));
+
+      function isVisible(el) {
+        const rect = el.getBoundingClientRect();
+        if (!rect || rect.width < 2 || rect.height < 2) return false;
+        const style = window.getComputedStyle(el);
+        return style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0' &&
+          rect.bottom >= 0 && rect.right >= 0 &&
+          rect.top <= window.innerHeight && rect.left <= window.innerWidth;
+      }
+
+      const elements = [];
+      for (const el of nodes) {
+        if (!isVisible(el)) continue;
+        idx += 1;
+        const id = 'oa-' + now + '-' + idx;
+        el.setAttribute('data-orbit-agent-id', id);
+        const rect = el.getBoundingClientRect();
+        const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim();
+        elements.push({
+          id,
+          tag: (el.tagName || '').toLowerCase(),
+          type: (el.getAttribute('type') || '').toLowerCase(),
+          text: text.slice(0, 120),
+          placeholder: (el.getAttribute('placeholder') || '').slice(0, 80),
+          ariaLabel: (el.getAttribute('aria-label') || '').slice(0, 80),
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        });
+        if (elements.length >= MAX_ELEMENTS) break;
+      }
+
+      const visibleText = (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 3000);
+      return {
+        url: location.href,
+        title: document.title || '',
+        visibleText,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        elements
+      };
+    })();
+  `;
+  return webview.executeJavaScript(script, true);
+}
+
+async function executeActionOnPage(webview, action) {
+  if (!action || !action.type) return { ok: false, message: "Invalid action." };
+  if (action.type === "navigate") {
+    if (!action.url) return { ok: false, message: "Navigate action missing URL." };
+    navigate(action.url);
+    return { ok: true, message: `Navigated to ${action.url}` };
+  }
+  if (action.type === "wait") {
+    const ms = Math.max(100, Math.min(10000, Number(action.ms) || 900));
+    await new Promise((r) => setTimeout(r, ms));
+    return { ok: true, message: `Waited ${ms}ms` };
+  }
+
+  const script = `
+    (() => {
+      const action = ${JSON.stringify(action)};
+      function byId(id) {
+        if (!id) return null;
+        return document.querySelector('[data-orbit-agent-id="' + String(id).replace(/"/g, '\\"') + '"]');
+      }
+      function focusable(el) {
+        return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      }
+
+      if (action.type === 'scroll') {
+        const amount = Math.max(50, Math.min(3000, Number(action.amount) || 500));
+        const y = action.direction === 'up' ? -amount : amount;
+        window.scrollBy({ top: y, behavior: 'smooth' });
+        return { ok: true, message: 'Scrolled ' + (action.direction === 'up' ? 'up' : 'down') };
+      }
+
+      const el = byId(action.targetId);
+      if (!el) return { ok: false, message: 'Target element not found for id ' + action.targetId };
+      el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+
+      if (action.type === 'click') {
+        el.focus?.();
+        el.click();
+        return { ok: true, message: 'Clicked target.' };
+      }
+
+      if (action.type === 'type') {
+        const value = String(action.text || '');
+        if (focusable(el)) {
+          el.focus();
+          if (!action.append) el.value = '';
+          if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+            el.value = (el.value || '') + value;
+          } else {
+            el.textContent = (el.textContent || '') + value;
+          }
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          if (action.submit && el.form && typeof el.form.requestSubmit === 'function') {
+            el.form.requestSubmit();
+          }
+          return { ok: true, message: 'Entered text.' };
+        }
+        return { ok: false, message: 'Target is not a text field.' };
+      }
+
+      if (action.type === 'press') {
+        const key = action.key || 'Enter';
+        const target = document.activeElement || el || document.body;
+        ['keydown', 'keyup'].forEach((name) => {
+          target.dispatchEvent(new KeyboardEvent(name, { key, bubbles: true }));
+        });
+        if (action.submit && target.form && typeof target.form.requestSubmit === 'function') {
+          target.form.requestSubmit();
+        }
+        return { ok: true, message: 'Pressed ' + key };
+      }
+
+      return { ok: false, message: 'Unknown action type.' };
+    })();
+  `;
+
+  return webview.executeJavaScript(script, true);
+}
+
+async function executePlannedActions(actions, stepIds = []) {
+  const webview = getActiveWebview();
+  if (!webview) return { ok: false, summary: "No active webpage tab to control." };
+  const results = [];
+  for (let i = 0; i < actions.length; i++) {
+    const action = actions[i];
+    const stepId = stepIds[i];
+    const label = action.type === "navigate" ? "Navigating..." : "Performing step...";
+    setBrowserAgentBusy(true, label);
+    if (stepId) updateRunStep(stepId, "running", "Executing...");
+    try {
+      const result = await executeActionOnPage(webview, action);
+      results.push(result);
+      if (!result.ok) {
+        if (stepId) updateRunStep(stepId, "error", result.message || "Failed");
+        break;
+      }
+      if (stepId) updateRunStep(stepId, "done", result.message || "Done");
+      await new Promise((r) => setTimeout(r, 450));
+    } catch (err) {
+      results.push({ ok: false, message: err.message || "Action failed." });
+      if (stepId) updateRunStep(stepId, "error", err.message || "Action failed.");
+      break;
+    }
+  }
+  const failed = results.find((r) => !r.ok);
+  if (failed) {
+    return { ok: false, summary: `Action failed: ${failed.message}` };
+  }
+  return { ok: true, summary: results.map((r) => r.message).join(" | ") || "Actions completed." };
+}
+
+async function runBrowserAgentLoop(initialFeedback = "") {
+  const webview = getActiveWebview();
+  if (!webview) {
+    addAgentMessage("assistant", "Open a webpage tab first so I can control it.");
+    appendToAgentThread("assistant", "Open a webpage tab first so I can control it.");
+    return;
+  }
+
+  setBrowserAgentBusy(true);
+  ensureAgentRun(browserAgentGoal);
+  setRunBadge("planning", "Planning");
+  setRunStage("Analyzing page...");
+  try {
+    let feedback = initialFeedback;
+    let executedActionCount = 0;
+    for (let i = 0; i < 6; i++) {
+      setRunStage("Analyzing current page...");
+      const page = await capturePageSnapshot(webview);
+      const payload = {
+        user_goal: browserAgentGoal,
+        conversation: browserAgentThread.slice(-12),
+        page,
+        execution_feedback: feedback,
+        attachments: browserAgentAttachments.map((f) => ({
+          name: f.name,
+          mimeType: f.mimeType,
+          dataUrl: f.dataUrl,
+        })),
+        run_state: {
+          executed_actions: executedActionCount,
+        },
+      };
+      const response = await requestBrowserPlan(payload);
+      if (response?.error) throw new Error(response.error);
+      const plan = response?.plan;
+      if (!plan) throw new Error("Planner returned no plan.");
+      setRunBadge("active", "Running");
+
+      if (plan.assistantMessage) {
+        addAgentMessage("assistant", plan.assistantMessage);
+        appendToAgentThread("assistant", plan.assistantMessage);
+      }
+
+      if (
+        (plan.status === "needs_action" || plan.status === "needs_confirmation") &&
+        Array.isArray(plan.actions) &&
+        plan.actions.length
+      ) {
+        const stepIds = plan.actions.map((a) => addRunStep(a, "pending", "Queued"));
+        setRunStage("Executing planned actions...");
+        const exec = await executePlannedActions(plan.actions, stepIds);
+        executedActionCount += plan.actions.length;
+        feedback = exec.summary;
+        if (!exec.ok) {
+          markRunFinished("error", "Execution stopped with an error.", "Error");
+          addAgentMessage("assistant", exec.summary);
+          appendToAgentThread("assistant", exec.summary);
+          break;
+        }
+        setRunStage("Collecting updated page state...");
+        continue;
+      }
+
+      if (plan.status === "done") {
+        const requiredDomain = extractRequestedDomain(browserAgentGoal);
+        const onExpectedDomain =
+          !requiredDomain || String(page.url || "").toLowerCase().includes(requiredDomain);
+        const needsInteraction = goalLikelyNeedsInteraction(browserAgentGoal);
+        const hasInteraction = executedActionCount > 0;
+
+        if (!onExpectedDomain || (needsInteraction && !hasInteraction)) {
+          feedback = !onExpectedDomain
+            ? `Planner marked done too early. Required destination domain "${requiredDomain}" is not reached yet. Current URL: ${page.url}`
+            : `Planner marked done too early. Goal requires interaction but no actions were executed yet. Continue with concrete steps.`;
+          setRunStage("Verifying goal completion...");
+          addAgentMessage(
+            "assistant",
+            "Continuing — I found the goal might not be complete yet."
+          );
+          appendToAgentThread(
+            "assistant",
+            "Continuing — I found the goal might not be complete yet."
+          );
+          continue;
+        }
+        markRunFinished("done", "Task completed.", "Completed");
+      } else if (plan.status === "error") {
+        markRunFinished("error", "Planner reported an error.", "Error");
+      }
+      break;
+    }
+  } catch (err) {
+    const message = err.message || "Browser agent failed.";
+    markRunFinished("error", "Run failed unexpectedly.", "Error");
+    addAgentMessage("assistant", message);
+    appendToAgentThread("assistant", message);
+  } finally {
+    setBrowserAgentBusy(false);
+  }
+}
+
+agentSendBtn.addEventListener("click", async () => {
+  const text = agentInput.value.trim();
+  const filesToSend = [...draftAgentAttachments];
+  if (!(text || filesToSend.length) || browserAgentBusy) return;
+
+  const attachmentSummary = filesToSend.length
+    ? `\n\nAttached: ${filesToSend.map((f) => f.name).join(", ")}`
+    : "";
+  const userDisplayText = (text || "Use attached files") + attachmentSummary;
+  addAgentMessage("user", userDisplayText);
+  appendToAgentThread("user", userDisplayText);
   agentInput.value = "";
   agentInput.style.height = "auto";
-  agentSendBtn.disabled = true;
+  draftAgentAttachments = [];
+  renderAgentAttachments();
+
+  browserAgentGoal = text || "Use attached file context to complete this task.";
+  browserAgentAttachments = filesToSend;
+  activeAgentRun = null;
+  updateAgentSendState();
+  await runBrowserAgentLoop("");
 });
 
 agentInput.addEventListener("keydown", (e) => {

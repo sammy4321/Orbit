@@ -1,12 +1,19 @@
 const { app, BrowserWindow, ipcMain, dialog, protocol, net, nativeImage } = require("electron");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const crypto = require("crypto");
+const http = require("http");
+const { WebSocketServer } = require("ws");
 const profiles = require("./profiles");
 const db = require("./db");
 const agent = require("./agent");
+const browserAgent = require("./browser-agent");
 
 let mainWindow = null;
 const windowProfiles = new Map();
+let agentWsHttpServer = null;
+let agentWsServer = null;
+const agentWsAuth = new Map();
 
 function createProfileGateway() {
   const iconPath = path.join(__dirname, "..", "assets", "orbit-logo.png");
@@ -58,6 +65,100 @@ function createWindow(profileId) {
 function ensureDbForSender(e) {
   const profileId = windowProfiles.get(e.sender.id) ?? profiles.getCurrent();
   if (profileId) db.switchProfile(profileId);
+}
+
+function startAgentWsServer() {
+  if (agentWsServer && agentWsHttpServer?.listening) return;
+
+  agentWsHttpServer = http.createServer();
+  agentWsServer = new WebSocketServer({ server: agentWsHttpServer });
+
+  agentWsServer.on("connection", (socket, request) => {
+    try {
+      const reqUrl = new URL(request.url || "/", "http://127.0.0.1");
+      const token = reqUrl.searchParams.get("token") || "";
+      const auth = agentWsAuth.get(token);
+      if (!auth) {
+        socket.close(1008, "Unauthorized");
+        return;
+      }
+
+      const ageMs = Date.now() - auth.createdAt;
+      if (ageMs > 10 * 60 * 1000) {
+        agentWsAuth.delete(token);
+        socket.close(1008, "Token expired");
+        return;
+      }
+
+      socket.on("message", async (raw) => {
+        let msg;
+        try {
+          msg = JSON.parse(String(raw || "{}"));
+        } catch {
+          socket.send(
+            JSON.stringify({
+              type: "error",
+              error: "Invalid JSON message",
+            })
+          );
+          return;
+        }
+
+        if (msg?.type === "ping") {
+          socket.send(JSON.stringify({ type: "pong", t: Date.now() }));
+          return;
+        }
+
+        if (msg?.type !== "browser.plan") return;
+
+        const requestId = msg.requestId || null;
+        const payload = msg.payload || {};
+
+        try {
+          const profileId = auth.profileId || profiles.getCurrent();
+          if (profileId) db.switchProfile(profileId);
+
+          const provider = db.getAiProvider();
+          let result;
+          if (provider === "gemini") {
+            result = await browserAgent.planStep(
+              payload,
+              db.getGeminiKey(),
+              db.getGeminiModel(),
+              "gemini"
+            );
+          } else {
+            result = await browserAgent.planStep(
+              payload,
+              db.getApiKey(),
+              db.getAiModel(),
+              "openrouter"
+            );
+          }
+
+          socket.send(
+            JSON.stringify({
+              type: "browser.plan.result",
+              requestId,
+              result,
+            })
+          );
+        } catch (err) {
+          socket.send(
+            JSON.stringify({
+              type: "browser.plan.result",
+              requestId,
+              result: { error: err.message || "WebSocket planner failed." },
+            })
+          );
+        }
+      });
+    } catch {
+      socket.close(1011, "Socket setup failed");
+    }
+  });
+
+  agentWsHttpServer.listen(0, "127.0.0.1");
 }
 
 function setupIpc() {
@@ -235,6 +336,45 @@ function setupIpc() {
     return agent.chat(messages, apiKey, model, tavilyKey, "openrouter");
   });
 
+  ipcMain.handle("agent:browserPlan", async (e, payload) => {
+    ensureDbForSender(e);
+    const provider = db.getAiProvider();
+    if (provider === "gemini") {
+      const apiKey = db.getGeminiKey();
+      const model = db.getGeminiModel();
+      return browserAgent.planStep(payload, apiKey, model, "gemini");
+    }
+    const apiKey = db.getApiKey();
+    const model = db.getAiModel();
+    return browserAgent.planStep(payload, apiKey, model, "openrouter");
+  });
+
+  ipcMain.handle("agent:wsInfo", (e) => {
+    ensureDbForSender(e);
+    startAgentWsServer();
+
+    const address = agentWsHttpServer.address();
+    const port =
+      typeof address === "object" && address && "port" in address
+        ? address.port
+        : null;
+    if (!port) return { error: "WebSocket server not ready." };
+
+    const senderId = e.sender.id;
+    const profileId = windowProfiles.get(senderId) ?? profiles.getCurrent();
+    const token = crypto.randomUUID();
+    agentWsAuth.set(token, {
+      senderId,
+      profileId,
+      createdAt: Date.now(),
+    });
+
+    return {
+      url: `ws://127.0.0.1:${port}`,
+      token,
+    };
+  });
+
   ipcMain.handle("tavilyKey:get", (e) => {
     ensureDbForSender(e);
     return db.getTavilyKey();
@@ -397,6 +537,16 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  if (agentWsServer) {
+    try {
+      agentWsServer.close();
+    } catch {}
+  }
+  if (agentWsHttpServer) {
+    try {
+      agentWsHttpServer.close();
+    } catch {}
+  }
   db.close();
   profiles.close();
 });

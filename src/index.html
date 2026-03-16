@@ -1003,6 +1003,53 @@
       min-width: 0;
     }
 
+    .browser-agent-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 1200;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(91, 141, 239, 0.16);
+      backdrop-filter: blur(1.5px);
+      pointer-events: auto;
+    }
+    .browser-agent-overlay.active {
+      display: inline-flex;
+    }
+    .browser-agent-overlay-center {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 18px;
+      border-radius: 999px;
+      background: rgba(17, 23, 34, 0.55);
+      border: 1px solid rgba(168, 198, 255, 0.45);
+      box-shadow: 0 12px 32px rgba(53, 104, 206, 0.2);
+      animation: browser-agent-float 1.6s ease-in-out infinite;
+    }
+    .browser-agent-overlay-spinner {
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      border-top-color: #9ec1ff;
+      animation: browser-agent-spin 0.8s linear infinite;
+    }
+    .browser-agent-overlay-text {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      color: rgba(236, 245, 255, 0.98);
+    }
+    @keyframes browser-agent-spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes browser-agent-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-2px); }
+    }
+
     .agent-resize-handle {
       flex-shrink: 0;
       width: 6px;
@@ -1050,6 +1097,12 @@
       border-bottom: 1px solid var(--border);
     }
     .agent-panel-title { font-size: 14px; font-weight: 600; color: var(--text); }
+    .agent-panel-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .agent-panel-reset,
     .agent-panel-close {
       width: 28px; height: 28px;
       border-radius: 6px;
@@ -1064,6 +1117,16 @@
       justify-content: center;
       transition: background 0.12s, color 0.12s;
     }
+    .agent-panel-reset svg {
+      width: 15px;
+      height: 15px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .agent-panel-reset:hover,
     .agent-panel-close:hover { background: var(--surface); color: var(--text); }
 
     .agent-panel-messages {
@@ -1089,20 +1152,174 @@
       gap: 10px;
       font-size: 14px;
       line-height: 1.6;
+      align-items: flex-start;
     }
     .agent-msg-avatar {
-      width: 24px; height: 24px;
+      width: 28px; height: 28px;
       border-radius: 50%;
       flex-shrink: 0;
       display: flex;
       align-items: center;
       justify-content: center;
+      border: 1px solid transparent;
+    }
+    .agent-msg-avatar svg {
+      width: 15px;
+      height: 15px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .agent-msg.user .agent-msg-avatar {
+      background: linear-gradient(180deg, #6ea0ff, #5b8def);
+      border-color: rgba(255,255,255,0.2);
+      color: #fff;
+      box-shadow: 0 6px 14px rgba(91,141,239,0.28);
+    }
+    .agent-msg.assistant .agent-msg-avatar {
+      background: linear-gradient(180deg, rgba(255,255,255,0.11), rgba(255,255,255,0.05));
+      border-color: var(--border);
+      color: var(--text);
+    }
+    .agent-msg-body {
+      flex: 1;
+      min-width: 0;
+      color: var(--text);
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .agent-msg.user .agent-msg-body {
+      background: rgba(91,141,239,0.14);
+      border-color: rgba(91,141,239,0.32);
+    }
+
+    .agent-run-card {
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .agent-run-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .agent-run-title {
       font-size: 12px;
       font-weight: 600;
+      color: var(--text);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
     }
-    .agent-msg.user .agent-msg-avatar { background: var(--accent); color: #fff; }
-    .agent-msg.assistant .agent-msg-avatar { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-    .agent-msg-body { flex: 1; min-width: 0; color: var(--text); }
+    .agent-run-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      color: var(--text-dim);
+      background: rgba(255,255,255,0.06);
+    }
+    .agent-run-badge.planning { color: #9bb8ff; border-color: rgba(91,141,239,0.35); background: rgba(91,141,239,0.12); }
+    .agent-run-badge.active { color: #7ed9ff; border-color: rgba(80,190,230,0.35); background: rgba(80,190,230,0.12); }
+    .agent-run-badge.confirm { color: #ffce6b; border-color: rgba(255,182,70,0.4); background: rgba(255,182,70,0.14); }
+    .agent-run-badge.done { color: #6ee7a4; border-color: rgba(44,196,123,0.4); background: rgba(44,196,123,0.14); }
+    .agent-run-badge.error { color: #ff8f8f; border-color: rgba(236,87,87,0.45); background: rgba(236,87,87,0.15); }
+    .agent-run-badge.cancelled { color: #c3c7d0; border-color: rgba(200,200,200,0.25); background: rgba(200,200,200,0.08); }
+    .agent-run-goal {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .agent-run-progress {
+      width: 100%;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      overflow: hidden;
+    }
+    .agent-run-progress-fill {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #5b8def, #4dd0e1);
+      transition: width 0.25s ease;
+    }
+    .agent-run-progress-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .agent-run-stage {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .agent-run-percent {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .agent-run-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 230px;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+    .agent-run-step {
+      display: flex;
+      gap: 8px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.02);
+      padding: 8px;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .agent-run-step-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      margin-top: 5px;
+      background: #6d7688;
+      flex-shrink: 0;
+    }
+    .agent-run-step.pending .agent-run-step-dot { background: #6d7688; }
+    .agent-run-step.running { border-color: rgba(91,141,239,0.4); background: rgba(91,141,239,0.12); }
+    .agent-run-step.running .agent-run-step-dot { background: #5b8def; box-shadow: 0 0 0 4px rgba(91,141,239,0.18); }
+    .agent-run-step.done { border-color: rgba(44,196,123,0.32); background: rgba(44,196,123,0.11); }
+    .agent-run-step.done .agent-run-step-dot { background: #32c57b; }
+    .agent-run-step.awaiting { border-color: rgba(255,182,70,0.36); background: rgba(255,182,70,0.1); }
+    .agent-run-step.awaiting .agent-run-step-dot { background: #ffb646; }
+    .agent-run-step.error { border-color: rgba(236,87,87,0.4); background: rgba(236,87,87,0.12); }
+    .agent-run-step.error .agent-run-step-dot { background: #ef5350; }
+    .agent-run-step.cancelled { border-color: rgba(160,160,160,0.3); background: rgba(160,160,160,0.1); }
+    .agent-run-step.cancelled .agent-run-step-dot { background: #aeb4bf; }
+    .agent-run-step-body { min-width: 0; }
+    .agent-run-step-label {
+      font-size: 12px;
+      color: var(--text);
+      line-height: 1.35;
+      word-break: break-word;
+    }
+    .agent-run-step-detail {
+      margin-top: 2px;
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.35;
+      word-break: break-word;
+    }
 
     .agent-panel-input-area {
       flex-shrink: 0;
@@ -1889,12 +2106,24 @@
 
   <!-- Main content: webview + agent panel -->
   <div id="main-content">
-    <div id="webview-container"></div>
+    <div id="webview-container">
+      <div id="browser-agent-overlay" class="browser-agent-overlay">
+          <div class="browser-agent-overlay-center">
+            <span class="browser-agent-overlay-spinner"></span>
+            <span class="browser-agent-overlay-text">Orbit is working...</span>
+          </div>
+      </div>
+    </div>
     <div class="agent-resize-handle" id="agent-resize-handle" title="Drag to resize"></div>
     <div class="agent-panel" id="agent-panel">
       <div class="agent-panel-header">
         <span class="agent-panel-title">Orbit</span>
-        <button class="agent-panel-close" id="agent-panel-close" title="Close">×</button>
+        <div class="agent-panel-actions">
+          <button class="agent-panel-reset" id="agent-panel-reset" title="New conversation">
+            <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+          </button>
+          <button class="agent-panel-close" id="agent-panel-close" title="Close">×</button>
+        </div>
       </div>
       <div class="agent-panel-messages" id="agent-panel-messages">
         <div class="agent-welcome">
@@ -1904,10 +2133,13 @@
       </div>
       <div class="agent-panel-input-area">
         <div class="chat-input-box agent-input-box">
-          <button class="chat-attach-btn" title="Attach">
+          <button class="chat-attach-btn" id="agent-attach-btn" title="Attach files">
             <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
           </button>
-          <textarea class="chat-textarea" id="agent-input" placeholder="Message Orbit..." rows="1"></textarea>
+          <div class="chat-input-row">
+            <div class="chat-attachments" id="agent-attachments"></div>
+            <textarea class="chat-textarea" id="agent-input" placeholder="Message Orbit..." rows="1"></textarea>
+          </div>
           <button class="chat-send-btn" id="agent-send-btn" title="Send" disabled>
             <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
           </button>
